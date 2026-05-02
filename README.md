@@ -1,10 +1,12 @@
 # Multi-Domain Support Triage Agent
 
-A terminal-based multi-domain support triage agent for the HackerRank Orchestrate hackathon.
+A terminal-based, multi-domain support triage agent built for the HackerRank Orchestrate hackathon.
 
-Processes support tickets across **HackerRank**, **Claude**, and **Visa** domains using a Retrieval-Augmented Generation (RAG) pipeline with semantic search over a ChromaDB vector index and OpenAI GPT-4 for reasoning and response generation.
+The system processes support tickets across **HackerRank**, **Claude**, and **Visa** domains, automatically classifying issues and determining appropriate routing or escalation paths.
 
----
+It leverages a Retrieval-Augmented Generation (RAG) pipeline, combining semantic search over a ChromaDB vector index with GPT-4 reasoning to retrieve relevant context and generate responses.
+
+All generated outputs are strictly grounded in the provided support corpus, ensuring that answers are derived only from trusted source material and not from model hallucination.
 
 ## Key Features
 
