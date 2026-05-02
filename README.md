@@ -2,9 +2,9 @@
 
 A terminal-based, multi-domain support triage agent built for the HackerRank Orchestrate hackathon.
 
-The system processes support tickets across **HackerRank**, **Claude**, and **Visa** domains, automatically classifying issues and determining appropriate routing or escalation paths.
+The system processes support tickets across **HackerRank**, **Claude**, and **Visa** domains using a hybrid classification pipeline that combines machine learning, rule-based heuristics, and LLM reasoning to determine routing and escalation paths.
 
-It leverages a Retrieval-Augmented Generation (RAG) pipeline, combining semantic search over a ChromaDB vector index with GPT-4 reasoning to retrieve relevant context and generate responses.
+It uses a RAG pipeline, combining semantic search over a ChromaDB vector index with GPT-4 reasoning to retrieve relevant context and generate responses.
 
 All generated outputs are strictly grounded in the provided support corpus, ensuring that answers are derived only from trusted source material and not from model hallucination.
 
@@ -13,10 +13,11 @@ All generated outputs are strictly grounded in the provided support corpus, ensu
 ## Key Features
 
 - Multi-domain ticket triage (HackerRank, Claude, Visa)
-- Retrieval-Augmented Generation (RAG) with ChromaDB
+- Hybrid domain classification (TF-IDF + Logistic Regression + keyword fallback)
+- Rule-based pre-classification for product area and request typ
+- Retrieval-Augmented Generation (RAG) with ChromaDB to retrieve most relevant documentation articles
 - Automatic escalation for unsafe or low-confidence queries
 - Structured JSON response generation using LLMs
-- Token-aware chunking for improved retrieval accuracy
 
 ---
 
@@ -31,7 +32,7 @@ support_tickets.csv
        ▼
   [agent.py]  ← 5-step pipeline
     │
-    ├── Step 1: Domain classification (hackerrank / claude / visa / general)
+    ├── Step 1: Domain classification (ML classifier + keyword rules fallback)
     ├── Step 2: Vector retrieval from ChromaDB
     ├── Step 3: Safety / escalation gate
     ├── Step 4: OpenAI LLM response generation (using information from the corpus)
@@ -75,13 +76,36 @@ Each ticket goes through a 5-step pipeline:
 
 #### 3.1. Domain Classification
 
-- Rule-based keyword matching to route queries (HackerRank, Claude, Visa)
+A hybrid 3-stage classification pipeline is used:
 
-#### 3.2. Vector Retrieval
+1. **Explicit company field:** If the input explicitly specifies a company, it is trusted directly.
+
+2. **Machine Learning classifier:** TF-IDF vectorization and Logistic Regression classifier trained on domain-specific ticket examples
+
+3. **Keyword fallback:** If classifier confidence < threshold (0.45), fallback to keyword-based scoring. Uses domain-specific keyword hints with word-boundary matching
+
+Why this approach:
+
+- ML improves generalization beyond strict keyword rules
+- Confidence threshold prevents overconfident misclassification
+- Keyword fallback ensures robustness on ambiguous or unseen inputs
+
+#### 3.2. Product Area and Request Type Classification
+
+Before invoking the LLM, the system classifies:
+
+- **Product Area** – via weighted keyword matching across domain-specific categories (e.g., billing, API, reliability)
+- **Request Type** – using keyword detection, with LLM fallback if unclear
+
+These labels are passed to the LLM and **cannot be overridden**, ensuring consistency.
+
+Why this approach: It enforces deterministic, consistent structured outputs while reducing reliance on the LLM for classification.
+
+#### 3.3. Vector Retrieval
 
 - Top-K relevant chunks fetched from ChromaDB using semantic similarity
 
-#### 3.3. Escalation Decision
+#### 3.4. Escalation Decision
 
 Tickets are automatically escalated when:
 
@@ -96,17 +120,7 @@ Uses OpenAI `gpt-4o-mini` with strict grounding rules:
 
 - Must rely only on retrieved context
 - Outputs structured JSON
-- Formatting requirements (e.g., answer cannot contain markdown fences and symbols, write in paragraphs, use numbered steps if possible)
-
-#### 3.5. Post-processing
-
-- Ensures consistent formatting and safe fallback on parsing errors
-
-Why this approach:
-
-- Retrieval-Augmented Generation (RAG) reduces hallucination
-- Deterministic checks (thresholds + keywords) improve reliability
-- Structured JSON output simplifies downstream evaluation
+- Formatting requirements
 
 ### 4. Execution (`main.py`)
 
@@ -181,10 +195,12 @@ Results are written to `support_tickets/output.csv` with these columns:
 
 ## Project Structure
 
-| File               | Purpose                                                          |
-| ------------------ | ---------------------------------------------------------------- |
-| `scraper.py`       | Crawls 3 support sites in `data/` folder, saves articles as .txt |
-| `build_index.py`   | Chunks + embeds articles into ChromaDB                           |
-| `agent.py`         | Core 5-step triage agent pipeline                                |
-| `main.py`          | Main entry point to run the agent, handle CSV input/output       |
-| `requirements.txt` | Python dependencies used in the project                          |
+| File               | Purpose                                                                                  |
+| ------------------ | ---------------------------------------------------------------------------------------- |
+| `scraper.py`       | Collects `.md` support articles and saves them as `.txt` files in the `data/` folder.    |
+| `build_index.py`   | Chunks + embeds articles into ChromaDB                                                   |
+| `agent.py`         | Core 5-step triage agent pipeline                                                        |
+| `main.py`          | Main entry point to run the agent, handle CSV input/output                               |
+| `classifier.py`    | Handles domain, product area, and request type classification using keyword rules and ML |
+| `rules.py`         | Stores keyword rules for product area, request type, and domain classification           |
+| `requirements.txt` | Python dependencies used in the project                                                  |
