@@ -10,6 +10,7 @@ agent.py
     5. Parse and return the final output fields
 """
 
+from classifier import DomainClassifier
 import json
 import os
 import re
@@ -81,6 +82,7 @@ class TriageAgent:
             api_key=os.environ["OPENAI_API_KEY"]
         )
         self.embedder = get_embedder()
+        self.classifier = DomainClassifier()
 
         # Connect to ChromaDB
         self.chroma = chromadb.PersistentClient(
@@ -92,28 +94,35 @@ class TriageAgent:
 
     def _classify_domain(self, issue: str, subject: str, company: str) -> str:
         """
-        Return one of: hackerrank | claude | visa | general
-        If company is a known value, use it directly.
-        Otherwise, count hint-word matches across domains.
+        Three-stage classification:
+          1. Exact company field match (fastest, most reliable)
+          2. TF-IDF classifier on issue+subject text (if confidence ≥ threshold)
+          3. Keyword hint counting (fallback when classifier is uncertain)
         """
         company_lower = (company or "").strip().lower()
 
-        if company_lower == "hackerrank":
-            return "hackerrank"
-        if company_lower == "claude":
-            return "claude"
-        if company_lower == "visa":
-            return "visa"
+        # Stage 1 — trust an explicit company value
+        if company_lower in ("hackerrank", "claude", "visa"):
+            return company_lower
 
-        combined = f"{issue} {subject}".lower()
-        scores = {domain: 0 for domain in DOMAIN_HINTS}
-        for domain, hints in DOMAIN_HINTS.items():
+        # Stage 2 — ML classifier
+        combined = f"{subject or ''} {issue}".strip()
+        domain, confidence = self.classifier.predict(combined)
+        if domain != "uncertain":
+            print(f"[classifier] domain={domain} confidence={confidence:.2f}")
+            return domain
+
+        # Stage 3 — keyword fallback (original logic, kept as safety net)
+        print(f"[classifier] low confidence ({confidence:.2f}), falling back to keywords")
+        combined_lower = combined.lower()
+        scores = {d: 0 for d in DOMAIN_HINTS}
+        for d, hints in DOMAIN_HINTS.items():
             for hint in hints:
-                if hint in combined:
-                    scores[domain] += 1
+                if hint in combined_lower:
+                    scores[d] += 1
 
-        best_domain = max(scores, key=lambda d: scores[d])
-        return best_domain if scores[best_domain] > 0 else "general"
+        best = max(scores, key=lambda d: scores[d])
+        return best if scores[best] > 0 else "general"
 
     # Finds the most relevant documentation chunks
     def _retrieve(self, query: str, domain: str) -> list[dict]:

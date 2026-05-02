@@ -72,7 +72,7 @@ def process_row(agent: TriageAgent, row: pd.Series, verbose: bool = False) -> di
     if verbose:
         print(f"\n{'─'*60}")
         print(f"  Issue   : {issue[:120]}")
-        print(f"  Domain  : {company}")
+        print(f"  Domain  : {company or '(inferred)'}")
         print(f"  Status  : {result.get('status')}")
         print(f"  Area    : {result.get('product_area')}")
         print(f"  Type    : {result.get('request_type')}")
