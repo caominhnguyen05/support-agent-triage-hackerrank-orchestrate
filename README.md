@@ -8,6 +8,8 @@ It leverages a Retrieval-Augmented Generation (RAG) pipeline, combining semantic
 
 All generated outputs are strictly grounded in the provided support corpus, ensuring that answers are derived only from trusted source material and not from model hallucination.
 
+---
+
 ## Key Features
 
 - Multi-domain ticket triage (HackerRank, Claude, Visa)
