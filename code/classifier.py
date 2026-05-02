@@ -1,76 +1,15 @@
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 import numpy as np
-
-
-TRAINING_DATA = [
-    # hackerrank
-    ("my coding test link expired", "hackerrank"),
-    ("the assessment won't load in my browser", "hackerrank"),
-    ("I cannot submit my solution", "hackerrank"),
-    ("the proctoring webcam is not working", "hackerrank"),
-    ("recruiter sent me a broken test link", "hackerrank"),
-    ("my hackerrank score is wrong", "hackerrank"),
-    ("interview challenge is showing an error", "hackerrank"),
-    ("coding challenge time ran out too early", "hackerrank"),
-    ("I failed the hiring assessment unfairly", "hackerrank"),
-    ("test environment keeps crashing", "hackerrank"),
-    ("IDE inside hackerrank is broken", "hackerrank"),
-    ("my candidate report is missing", "hackerrank"),
-    ("plagiarism flag on my submission is incorrect", "hackerrank"),
-    ("remote proctoring disconnected mid-test", "hackerrank"),
-    ("cannot access my hackerrank dashboard", "hackerrank"),
-
-    # claude
-    ("claude is not responding to my messages", "claude"),
-    ("my claude pro subscription was charged twice", "claude"),
-    ("how do I cancel my claude.ai plan", "claude"),
-    ("artifacts are not rendering in the conversation", "claude"),
-    ("context window limit reached too quickly", "claude"),
-    ("I lost my conversation history in claude", "claude"),
-    ("anthropic charged me but I cannot access pro", "claude"),
-    ("claude is giving wrong answers about recent events", "claude"),
-    ("how do I export my claude conversations", "claude"),
-    ("claude keeps forgetting things mid chat", "claude"),
-    ("my claude account is locked", "claude"),
-    ("claude api rate limit exceeded", "claude"),
-    ("image upload is not working in claude", "claude"),
-    ("claude is much slower than usual today", "claude"),
-    ("team plan seat not showing up for my colleague", "claude"),
-
-    # visa
-    ("my visa card was declined at the supermarket", "visa"),
-    ("international transaction fee on my statement", "visa"),
-    ("I did not make this visa purchase", "visa"),
-    ("ATM would not give me cash with my visa card", "visa"),
-    ("how do I dispute a charge on my visa card", "visa"),
-    ("contactless payment not working on my card", "visa"),
-    ("visa card expired and new one not arrived", "visa"),
-    ("my card PIN is blocked after wrong attempts", "visa"),
-    ("merchant charged me twice on visa", "visa"),
-    ("online payment declined but card is valid", "visa"),
-    ("visa virtual card not accepted by merchant", "visa"),
-    ("foreign currency conversion rate seems wrong", "visa"),
-    ("card transaction pending for too many days", "visa"),
-    ("lost my visa card abroad what do I do", "visa"),
-    ("cvv not accepted during checkout", "visa"),
-
-    # general
-    ("hello I have a question", "general"),
-    ("please help me with my account", "general"),
-    ("I need support urgently", "general"),
-    ("something is not working properly", "general"),
-    ("can someone assist me please", "general"),
-]
-
+import re
+from rules import TRAINING_DATA, BUG_SIGNALS, INVALID_SIGNALS, FEATURE_REQUEST_SIGNALS, PRODUCT_AREA_RULES
 
 class DomainClassifier:
     """
-    TF-IDF + Logistic Regression classifier for routing tickets
-    to: hackerrank | claude | visa | general
+    TF-IDF + Logistic Regression classifier for classifying 
+    tickets to domains: hackerrank | claude | visa | general
 
     Trains automatically on construction using TRAINING_DATA.
-    Call retrain(texts, labels) to extend with domain-specific examples.
     """
 
     CONFIDENCE_THRESHOLD = 0.45
@@ -80,12 +19,12 @@ class DomainClassifier:
             stop_words="english",
             ngram_range=(1, 2),
             max_features=5000,
-            sublinear_tf=True,        # dampens high-frequency terms
+            sublinear_tf=True,     
         )
         self.model = LogisticRegression(
             max_iter=1000,
             class_weight="balanced",
-            C=1.5,                    # slight regularisation increase for small corpus
+            C=1.5,               
         )
         self.is_trained = False
         self._auto_train()
@@ -110,7 +49,7 @@ class DomainClassifier:
         """
         Returns (domain, confidence).
         If confidence is below CONFIDENCE_THRESHOLD, returns ("uncertain", confidence)
-        so the caller can fall back to keyword matching.
+        so the agent can fall back to keyword matching.
         """
         if not self.is_trained:
             return "uncertain", 0.0
@@ -125,3 +64,33 @@ class DomainClassifier:
             return "uncertain", confidence
 
         return domain, confidence
+
+def _word_match(keyword: str, text: str) -> bool:
+    if " " in keyword:
+        return keyword in text
+    return bool(re.search(rf"\b{re.escape(keyword)}\b", text))
+
+def classify_product_area(domain: str, issue: str, subject: str) -> str | None:
+    combined = f"{subject or ''} {issue}".lower()
+    scores = {}
+
+    for rule_domain, keywords, label in PRODUCT_AREA_RULES:
+        if rule_domain not in (domain, "general"):
+            continue
+
+        matches = sum(_word_match(kw, combined) for kw in keywords)
+        if matches > 0:
+            scores[label] = scores.get(label, 0) + matches
+
+    if scores:
+        return max(scores, key=scores.get)
+
+def classify_request_type(issue: str, subject: str) -> str | None:
+    combined = f"{subject or ''} {issue}".lower()
+    if any(_word_match(sig, combined) for sig in INVALID_SIGNALS):
+        return "invalid"
+    if any(_word_match(sig, combined) for sig in BUG_SIGNALS):
+        return "bug"
+    if any(_word_match(sig, combined) for sig in FEATURE_REQUEST_SIGNALS):
+        return "feature_request"
+    return None
