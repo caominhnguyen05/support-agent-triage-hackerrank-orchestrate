@@ -36,6 +36,6 @@ data/embeddings/
 *.sqlite
 *.db
 
-/log.txt
-/agent_logic.txt
+/*.txt
 /old_outputs
+*.jpg
