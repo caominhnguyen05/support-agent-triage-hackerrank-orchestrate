@@ -27,7 +27,15 @@ build/
 Thumbs.db
 
 # local data / caches the participant may create
+data/claude_txt
+data/visa_txt
+data/hackerrank_txt
+data/chroma_db/
 data/index/
 data/embeddings/
 *.sqlite
 *.db
+
+/log.txt
+/agent_logic.txt
+/old_outputs
