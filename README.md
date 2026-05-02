@@ -1,134 +1,188 @@
-# HackerRank Orchestrate
+# Multi-Domain Support Triage Agent
 
-Starter repository for the **HackerRank Orchestrate** 24-hour hackathon (May 1–2, 2026).
+A terminal-based, multi-domain support triage agent built for the HackerRank Orchestrate hackathon.
 
-Build a terminal-based AI agent that triages real support tickets across three product ecosystems; **HackerRank**, **Claude**, and **Visa** — using only the support corpus shipped in this repo.
+The system processes support tickets across **HackerRank**, **Claude**, and **Visa** domains, automatically classifying issues and determining appropriate routing or escalation paths.
 
-Read [`problem_statement.md`](./problem_statement.md) for the full task spec, input/output schema, and allowed values, and [`evalutation_criteria.md`](./evalutation_criteria.md) for how submissions are scored.
+It leverages a Retrieval-Augmented Generation (RAG) pipeline, combining semantic search over a ChromaDB vector index with GPT-4 reasoning to retrieve relevant context and generate responses.
 
----
+All generated outputs are strictly grounded in the provided support corpus, ensuring that answers are derived only from trusted source material and not from model hallucination.
 
-## Contents
+## Key Features
 
-1. [Repository layout](#repository-layout)
-2. [What you need to build](#what-you-need-to-build)
-3. [Where your code goes](#where-your-code-goes)
-4. [Quickstart](#quickstart)
-5. [Chat transcript logging](#chat-transcript-logging)
-6. [Submission](#submission)
-7. [Judge interview](#judge-interview)
-8. [Evaluation criteria](#evaluation-criteria)
+- Multi-domain ticket triage (HackerRank, Claude, Visa)
+- Retrieval-Augmented Generation (RAG) with ChromaDB
+- Automatic escalation for unsafe or low-confidence queries
+- Structured JSON response generation using LLMs
+- Token-aware chunking for improved retrieval accuracy
 
 ---
 
-## Repository layout
+## Architecture
 
 ```
-.
-├── AGENTS.md                       # Rules for AI coding tools + transcript logging
-├── problem_statement.md            # Full task description and I/O schema
-├── README.md                       # You are here
-├── code/                           # ← Build your agent here
-│   └── main.py                     #   Entry point (rename/extend as you like)
-├── data/                           # Local-only support corpus (no network needed)
-│   ├── hackerrank/                 #   HackerRank help center
-│   ├── claude/                     #   Claude Help Center export
-│   └── visa/                       #   Visa consumer + small-business support
-└── support_tickets/
-    ├── sample_support_tickets.csv  # Inputs + expected outputs (for development)
-    ├── support_tickets.csv         # Inputs only (run your agent on these)
-    └── output.csv                  # Write your agent's predictions here
+support_tickets.csv
+       │
+       ▼
+  [main.py]  ← entry point
+       │
+       ▼
+  [agent.py]  ← 5-step pipeline
+    │
+    ├── Step 1: Domain classification (hackerrank / claude / visa / general)
+    ├── Step 2: Vector retrieval from ChromaDB
+    ├── Step 3: Safety / escalation gate
+    ├── Step 4: OpenAI LLM response generation (using information from the corpus)
+    └── Step 5: Structured JSON output parsing
+       │
+       ▼
+  output.csv
 ```
 
 ---
 
-## What you need to build
+## Approach Overview
 
-A terminal-based agent that, for each row in `support_tickets/support_tickets.csv`, produces:
+This project implements a retrieval-augmented support triage agent that classifies, answers, or escalates support tickets using domain-specific documentation from the provided support corpus.
 
-| Column         | Allowed values                                          |
-| -------------- | ------------------------------------------------------- |
-| `status`       | `replied`, `escalated`                                  |
-| `product_area` | most relevant support category / domain area            |
-| `response`     | user-facing answer grounded in the provided corpus      |
-| `justification`| concise explanation of the routing/answering decision   |
-| `request_type` | `product_issue`, `feature_request`, `bug`, `invalid`    |
+### 1. Data Preparation (`scraper.py`)
 
-Hard requirements (from `problem_statement.md`):
+Markdown documentation is converted into clean, structured `.txt` files for embeddings creation:
 
-- Must be **terminal-based**.
-- Must use **only the provided support corpus** (no live web calls for ground-truth answers).
-- Must **escalate** high-risk, sensitive, or unsupported cases instead of guessing.
-- Must avoid hallucinated policies or unsupported claims.
+- Removes YAML frontmatter and Markdown formatting
+- Standardizes metadata (SOURCE, TITLE, DOMAIN)
+- Flattens directory structure for easier indexing
 
-Beyond that you are free to bring your own approach — RAG, vector DBs, tool use, structured output, agent frameworks, classical ML, or anything else.
+Why: Clean, normalized text improves embedding quality and retrieval accuracy.
+
+### 2. Vector Indexing (`build_index.py`)
+
+- The processed text from `.txt` files are split into token-based overlapping chunks (using OpenAI's Python Library `tiktoken`)
+- Vector embeddings are created for each chunk using `text-embedding-3-small` from OpenAPI
+- These embeddings are stored in ChromaDB as a persistent vector database for efficient semantic retrieval
+
+Why these choices:
+
+- OpenAI `text-embedding-3-small` to create embeddings: this model provides strong semantic retrieval performance at a significantly low cost. Offers higher efficiency than previous models like `text-embedding-ada-002`, and much cheaper than `text-embedding-3-large`.
+- `tiktoken` for token-aware chunking: ensures text is split based on the same tokenization scheme used by OpenAI models, rather than naive character or word counts.
+- ChromaDB for embedding storage: a lightweight, local, and easy-to-use vector database for fast similarity search and persistence
+
+### 3. Triage Pipeline (`agent.py`)
+
+Each ticket goes through a 5-step pipeline:
+
+#### 3.1. Domain Classification
+
+- Rule-based keyword matching to route queries (HackerRank, Claude, Visa)
+
+#### 3.2. Vector Retrieval
+
+- Top-K relevant chunks fetched from ChromaDB using semantic similarity
+
+#### 3.3. Escalation Decision
+
+Tickets are automatically escalated when:
+
+- Sensitive keywords are detected (e.g., fraud, unauthorized access, legal, billing disputes, account lockout)
+- Retrieval confidence is too low — specifically, when the maximum similarity score across retrieved chunks is below 0.4.
+  This indicates that no sufficiently relevant documentation was found in the corpus, so the agent cannot provide a grounded answer.
+- The LLM determines the issue requires human verification
+
+#### 3.4. Response Generation
+
+Uses OpenAI `gpt-4o-mini` with strict grounding rules:
+
+- Must rely only on retrieved context
+- Outputs structured JSON
+- Formatting requirements (e.g., answer cannot contain markdown fences and symbols, write in paragraphs, use numbered steps if possible)
+
+#### 3.5. Post-processing
+
+- Ensures consistent formatting and safe fallback on parsing errors
+
+Why this approach:
+
+- Retrieval-Augmented Generation (RAG) reduces hallucination
+- Deterministic checks (thresholds + keywords) improve reliability
+- Structured JSON output simplifies downstream evaluation
+
+### 4. Execution (`main.py`)
+
+- Processes tickets from `support_tickets.csv`
+- Runs the triage pipeline per row
+- Outputs structured results (`status`, `response`, `request_type`, etc.) to `output.csv`
 
 ---
 
-## Where your code goes
+## Install Dependencies and Run the Agent
 
-All of your work belongs in [`code/`](./code/). The repo ships with an empty `code/main.py` you can grow into your full agent — add more modules (`agent.py`, `retriever.py`, `classifier.py`, etc.) next to it as needed.
-
-Conventions:
-
-- Put a **README inside `code/`** describing how to install dependencies and run your agent.
-- Read secrets **from environment variables only** (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, …). Copy `.env.example` → `.env` (already gitignored) if you keep one. **Never hardcode keys.**
-- Be **deterministic** where possible. Seed any random sampling.
-- Write responses to `support_tickets/output.csv`.
-
----
-
-## Quickstart
-
-Clone this repository:
+### 1. Install dependencies
 
 ```bash
-git clone git@github.com:interviewstreet/hackerrank-orchestrate-may26.git
-cd hackerrank-orchestrate-may26
+pip install -r requirements.txt
 ```
 
-You are free to use any language or runtime. We recommend **Python**, **JavaScript**, or **TypeScript**.
+### 2. Configure environment
+
+Create a `.env` file in the project root and add your OpenAI API key:
+
+```bash
+OPENAI_API_KEY=your_openai_api_key
+```
+
+### 3. Scrape the support corpus
+
+```bash
+python scraper.py
+# Converts all .md files into .txt files and saves articles to data/
+```
+
+### 4. Build the vector index
+
+```bash
+python build_index.py
+# Chunks the articles, create vector embeddings, and stores everything in ChromaDB
+```
+
+### 5. Run the agent
+
+Full run on `support_tickets.csv`:
+
+```bash
+python main.py
+```
+
+Quick test (first 10 rows):
+
+```bash
+python main.py --limit 10 --verbose
+```
 
 ---
 
-## Chat transcript logging
+## Output Format
 
-This repo ships with an `AGENTS.md` that any modern AI coding tool (Cursor, Claude Code, Codex, Gemini CLI, Copilot, etc.) will read. It instructs the tool to append every conversation turn to a single shared log file:
+Results are written to `support_tickets/output.csv` with these columns:
 
-| Platform       | Path                                              |
-| -------------- | ------------------------------------------------- |
-| macOS / Linux  | `$HOME/hackerrank_orchestrate/log.txt`            |
-| Windows        | `%USERPROFILE%\hackerrank_orchestrate\log.txt`    |
-
-You don't need to do anything to enable it — just use your AI tool normally. You'll upload this `log.txt` as your chat transcript at submission time.
-
----
-
-## Submission
-
-Submit on the HackerRank Community Platform:
-<https://www.hackerrank.com/contests/hackerrank-orchestrate-may26/challenges/support-agent/submission>
-
-You will upload **three** files:
-
-1. **Code zip** — zip your `code/` directory and upload it. Exclude virtualenvs, `node_modules`, build artifacts, the `data/` corpus, and the `support_tickets/` CSVs.
-2. **Predictions CSV** — your agent's output for `support_tickets/support_tickets.csv` (i.e. the populated `output.csv`).
-3. **Chat transcript** — the `log.txt` from the path in [Chat transcript logging](#chat-transcript-logging).
+| Column          | Description                                             |
+| --------------- | ------------------------------------------------------- |
+| `issue`         | Original ticket text                                    |
+| `subject`       | Original subject                                        |
+| `company`       | Original company field                                  |
+| `status`        | `replied` or `escalated`                                |
+| `product_area`  | Inferred support category                               |
+| `response`      | Support answer for user or escalation message           |
+| `justification` | Agent's reasoning for the decision                      |
+| `request_type`  | `product_issue`, `feature_request`, `bug`, or `invalid` |
 
 ---
 
-## Judge interview
+## Project Structure
 
-After a successful submission, your AI Judge interview will happen within a few hours after the hackathon ends. It will stay open for the next 4 hours. 
-
-The AI Judge will have access to your submission and may ask about your approach, decisions, and how you used AI while building your solution. The interview will be 30 minutes long, and keeping your camera on is mandatory.
-
-Results will be announced on May 15, 2026
-
----
-
-## Evaluation criteria
-
-Submissions are scored across four dimensions: agent design (your `code/`), the AI Judge interview, output accuracy on `support_tickets/output.csv`, and AI fluency from your chat transcript.
-
-See [`evalutation_criteria.md`](./evalutation_criteria.md) for the full rubric.
+| File               | Purpose                                                          |
+| ------------------ | ---------------------------------------------------------------- |
+| `scraper.py`       | Crawls 3 support sites in `data/` folder, saves articles as .txt |
+| `build_index.py`   | Chunks + embeds articles into ChromaDB                           |
+| `agent.py`         | Core 5-step triage agent pipeline                                |
+| `main.py`          | Main entry point to run the agent, handle CSV input/output       |
+| `requirements.txt` | Python dependencies used in the project                          |
